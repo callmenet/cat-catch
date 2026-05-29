@@ -1,0 +1,69 @@
+name: Sync and Build Extension
+
+on:
+  schedule:
+    - cron: '0 0 */5 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync Upstream & Generate Changelog
+        id: sync
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OLD_VERSION=$(node -p "require('./manifest.json').version")
+
+          if gh repo sync ${{ github.repository }} --branch ${{ github.ref_name }} 2>/dev/null; then
+            git pull origin ${{ github.ref_name }}
+          fi
+
+          NEW_VERSION=$(node -p "require('./manifest.json').version")
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Changelog"
+            echo "\`\`\`"
+            if [ "$OLD_VERSION" != "$NEW_VERSION" ] && git rev-parse "v$OLD_VERSION" >/dev/null 2>&1; then
+              git log --oneline "v$OLD_VERSION..HEAD"
+            else
+              git log -n 15 --oneline
+            fi
+            echo "\`\`\`"
+          } > body.md
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup Just
+        uses: extractions/setup-just@v2
+
+      - name: Install Global Dependencies
+        run: npm install -g crx3
+
+      - name: Build Extension
+        run: |
+          sed -i 's/\*\.{js,html}/*.{json,html}/g' justfile
+          just build
+
+      - name: Create Tag and Release
+        uses: softprops/action-gh-release@3efcac8951299998593f871640ea8059d6818655
+        with:
+          tag_name: v${{ steps.sync.outputs.version }}
+          name: v${{ steps.sync.outputs.version }}
+          body_path: body.md
+          files: |
+            *.zip
+            *.crx
