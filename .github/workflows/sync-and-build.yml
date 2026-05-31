@@ -9,38 +9,67 @@ permissions:
   contents: write
 
 jobs:
-  sync-and-build:
+  check-and-sync:
     runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.sync.outputs.has_changes }}
+      version: ${{ steps.sync.outputs.version }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Sync Upstream & Generate Changelog
+      - name: Sync Upstream & Check Version
         id: sync
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          OLD_VERSION=$(node -p "require('./manifest.json').version")
+          OLD_VERSION=$(jq -r '.version' manifest.json)
 
           if gh repo sync ${{ github.repository }} --branch ${{ github.ref_name }} 2>/dev/null; then
             git pull origin ${{ github.ref_name }}
           fi
 
-          NEW_VERSION=$(node -p "require('./manifest.json').version")
-          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          NEW_VERSION=$(jq -r '.version' manifest.json)
 
-          {
-            echo "### Changelog"
-            echo "\`\`\`"
-            if [ "$OLD_VERSION" != "$NEW_VERSION" ] && git rev-parse "v$OLD_VERSION" >/dev/null 2>&1; then
-              git log --oneline "v$OLD_VERSION..HEAD"
-            else
-              git log -n 15 --oneline
-            fi
-            echo "\`\`\`"
-          } > body.md
+          if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+            {
+              echo "### Changelog"
+              echo "\`\`\`"
+              if git rev-parse "v$OLD_VERSION" >/dev/null 2>&1; then
+                git log --oneline "v$OLD_VERSION..HEAD"
+              else
+                git log -n 15 --oneline
+              fi
+              echo "\`\`\`"
+            } > body.md
+          fi
+
+      - name: Upload Changelog
+        if: steps.sync.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: body.md
+
+  build-and-release:
+    runs-on: ubuntu-latest
+    needs: check-and-sync
+    if: needs.check-and-sync.outputs.has_changes == 'true'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Changelog
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -61,8 +90,8 @@ jobs:
       - name: Create Tag and Release
         uses: softprops/action-gh-release@3efcac8951299998593f871640ea8059d6818655
         with:
-          tag_name: v${{ steps.sync.outputs.version }}
-          name: v${{ steps.sync.outputs.version }}
+          tag_name: v${{ needs.check-and-sync.outputs.version }}
+          name: v${{ needs.check-and-sync.outputs.version }}
           body_path: body.md
           files: |
             *.zip
