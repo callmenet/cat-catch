@@ -9,6 +9,7 @@ let tsAddArg = params.get("tsAddArg");  // 自定义 切片参数
 let autoReferer = params.get("autoReferer");    // 是否已经自动调整 referer
 const tabId = parseInt(params.get("tabid"));    // 资源所在的标签页ID 用来获取密钥
 const key = params.get("key");  // 自定义密钥
+const _autoDown = params.get("autoDown");  //是否自动下载
 let autoDown = params.get("autoDown");  //是否自动下载
 const autoClose = params.get("autoClose");  // 下载完是否关闭页面
 let retryCount = parseInt(params.get("retryCount"));  // 重试次数
@@ -189,48 +190,58 @@ function init() {
 
             if (m3u8Text == "") { return; }
 
-            // // 批量生成切片链接 解析range标签
+            // 批量生成切片链接 解析range标签
             if (m3u8Text.includes('${range:')) {
-                const rangePattern = /\$\{range:(\d+)-(\d+|\?),?(\d+)?\}/;
-                const match = m3u8Text.match(rangePattern);
-                if (!match) { return; }
-                const start = parseInt(match[1]);
-                let end = match[2];
-                const padding = match[3] ? parseInt(match[3]) : 0;
+                const rangePattern = /\$\{range:(\d+)-(\d+|\?),?(\d+)?\}/g;
+                const matches = [...m3u8Text.matchAll(rangePattern)];
+                if (!matches.length) return;
+
+                const tags = matches.map(m => ({
+                    start: parseInt(m[1]),
+                    end: m[2] === '?' ? Infinity : parseInt(m[2]),
+                    pad: m[3] ? parseInt(m[3]) : 0,
+                    isOpen: m[2] === '?'
+                }));
+
+                const hasOpen = tags.some(t => t.isOpen);
                 const urls = [];
+                const generatedSet = new Set();
+                let n = 0;
+                const maxUrls = 9999;
+
                 $("#m3u8Text").val(i18n.loadingData);
 
-                if (end === "?") {
-                    let i = start;
-                    while (true) {
-                        let number = i.toString();
-                        if (padding > 0) {
-                            number = number.padStart(padding, '0');
+                while (urls.length < maxUrls) {
+                    const values = tags.map(t => {
+                        if (t.isOpen) {
+                            return (t.start + n).toString().padStart(t.pad, '0');
+                        } else {
+                            const len = t.end - t.start + 1;
+                            return (t.start + (n % len)).toString().padStart(t.pad, '0');
                         }
-                        const url = m3u8Text.replace(rangePattern, number);
+                    });
+
+                    let idx = 0;
+                    const url = m3u8Text.replace(rangePattern, () => values[idx++]);
+
+                    if (generatedSet.has(url)) break;
+                    generatedSet.add(url);
+
+                    // 探查模式需要fetch验证
+                    if (hasOpen) {
                         try {
                             const response = await fetch(url, { method: 'HEAD' });
-                            if (!response.ok) {
-                                break;
-                            }
-                            urls.push(url);
-                        } catch (error) { break; }
-
-                        i++;
-                        // 防止死循环 最大9999个
-                        if (urls.length >= 9999) { break; }
-                    }
-                } else {
-                    end = parseInt(end);
-                    for (let i = start; i <= end; i++) {
-                        let number = i.toString();
-                        if (padding > 0) {
-                            number = number.padStart(padding, '0');
+                            if (!response.ok) break;
+                        } catch {
+                            break;
                         }
-                        urls.push(m3u8Text.replace(rangePattern, number));
                     }
+
+                    urls.push(url);
+                    n++;
                 }
-                if (urls && urls.length) {
+
+                if (urls.length) {
                     m3u8Text = urls.join("\n\n");
                     $("#m3u8Text").val(m3u8Text);
                 } else {
@@ -262,7 +273,7 @@ function init() {
                 m3u8Text += "#EXT-X-TARGETDURATION:233\n";
                 for (let ts of tsList) {
                     if (ts) {
-                        m3u8Text += "#EXTINF:1\n";
+                        m3u8Text += "#EXTINF:15\n";
                         m3u8Text += ts + "\n";
                     }
                 }
@@ -809,6 +820,16 @@ function parseTs(data) {
             });
         });
     }
+
+    /**
+     * 是否需要数据预处理。
+     * 判断是否非常见切片格式。否则勾选预处理。
+     */
+    if (!["ts", "mp4", "m4s", "aac", "ac3", "webm"].includes(GetExt(_fragments[0].url))) {
+        document.querySelector("#dataPreprocessing").checked = true;
+    }
+
+
     function showKeyInfo(buffer, decryptdata, i) {
         const $tips = $("#tips");
         $tips.append(`${i18n.keyAddress}: <input type="text" value="${decryptdata.uri}" spellcheck="false" readonly="readonly" class="keyUrl">`);
@@ -1463,6 +1484,7 @@ $("#searchingForRealKey").click(function () {
         });
 });
 
+
 /**
  * 调用新下载器的方法
  * @param {number} start 下载范围 开始索引
@@ -1485,8 +1507,33 @@ function downloadNew(start = 0, end = _fragments.length) {
     // 储存切片所需 DOM 提高性能
     const itemDOM = new Map();
 
+    // 数据预处理 切片数据伪装PNG 剔除PNG数据
+    document.querySelector("#dataPreprocessing").checked && down.use(function (buffer, fragment) {
+        const view = new Uint8Array(buffer);
+        const len = view.length;
+        let tsStartIndex = -1;
+        // 检测PNG
+        if (view[0] === 0x89 && view[1] === 0x50 && view[2] === 0x4E && view[3] === 0x47) {
+            // 找到PNG结束标志IEND
+            for (let i = 0; i < len - 4; i++) {
+                if (view[i] === 73 && view[i + 1] === 69 &&
+                    view[i + 2] === 78 && view[i + 3] === 68) {
+                    // IEND(4字节) + CRC(4字节) = 8字节
+                    tsStartIndex = i + 8;
+                    break;
+                }
+            }
+        }
+        // 未找到头 或者 找不到结束标志 则返回原buffer
+        if (tsStartIndex === -1 || tsStartIndex >= len) {
+            return buffer;
+        }
+        // 返回切除图片头部后的buffer
+        return buffer.slice(tsStartIndex);
+    }, 'preprocess');
+
     // 解密函数
-    down.setDecrypt(function (buffer, fragment) {
+    down.use(function (buffer, fragment) {
         return new Promise(function (resolve, reject) {
             // 跳过解密 录制模式 切片不存在加密 跳过解密 直接返回
             if (skipDecrypt || recorder || !fragment.encrypted || !fragment.decryptdata) {
@@ -1520,7 +1567,7 @@ function downloadNew(start = 0, end = _fragments.length) {
             }
             resolve(buffer);
         });
-    });
+    }, 'decrypt');
     // 转码函数 如果存在down.mapTag 跳过转码
     if (downSet.mp4 && !down.mapTag) {
         let tempBuffer = null;
@@ -1537,12 +1584,12 @@ function downloadNew(start = 0, end = _fragments.length) {
             }
             tempBuffer = segment.data;
         });
-        down.setTranscode(async function (buffer, fragment) {
+        down.use(async function (buffer, fragment) {
             head = fragment.index == 0;
             transmuxer.push(new Uint8Array(buffer));
             transmuxer.flush();
             return tempBuffer ? tempBuffer.buffer : buffer;
-        });
+        }, 'transcode');
     }
     // 下载错误
     down.on('downloadError', function (fragment, error) {

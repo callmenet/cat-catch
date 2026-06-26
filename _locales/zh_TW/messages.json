@@ -1039,5 +1039,8 @@
   },
   "contextMenus": {
     "message": "右鍵菜單"
+  },
+  "dataPreprocessing": {
+    "message": "資料預處理"
   }
 }
