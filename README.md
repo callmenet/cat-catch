@@ -1,4 +1,4 @@
-<p align="center"> [中文] | [<a href="README_en.md">English</a>] | [<a href="README_es.md">Español</a>]</p>
+<p align="center"> [中文] | [<a href="README_en.md">English</a>] | [<a href="README_es.md">Español</a>] | [<a href="README_ru.md">Русский</a>]</p>
 
 # 📑简介
 猫抓(cat-catch) 资源嗅探扩展，能够帮你筛选列出当前页面的资源。
@@ -16,7 +16,7 @@ https://addons.mozilla.org/addon/cat-catch/ 😂需非国区IP访问
 💔猫抓是开源的，任何人都可以下载修改上架到应用商店，已经有不少加上广告代码后上架的伪猫抓，请注意自己的数据安全。所有安装地址以github和用户文档为准。
 
 # 📒用户文档
-https://o2bmm.gitbook.io/cat-catch/
+https://cat-catch.94cat.com/
 
 # 🌏翻译
 [![gitlocalized ](https://gitlocalize.com/repo/9392/whole_project/badge.svg)](https://gitlocalize.com/repo/9392?utm_source=badge)
