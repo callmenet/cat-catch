@@ -1503,6 +1503,7 @@ function downloadNew(start = 0, end = _fragments.length) {
     // 过滤掉未选择的 _fragments
     const selectedFragments = recorder ? _fragments.slice(start) : _fragments.filter(fragment => fragment.selected);
     const down = new Downloader(selectedFragments, parseInt($("#thread").val()));
+    down.autoRetry = true;  // 开启自动重试
     $progress.html(`${down.success}/${down.total}`);
 
     // 储存切片所需 DOM 提高性能
@@ -1769,14 +1770,14 @@ function mergeTsNew(down) {
     $progress.html(i18n.merging);
 
     // 创建Blob
-    const fileBlob = new Blob(down.buffer, { type: down.transcode ? "video/mp4" : "video/MP2T" });
+    const fileBlob = new Blob(down.buffer, { type: down.findPipeline('transcode') ? "video/mp4" : "video/MP2T" });
 
     // 默认后缀
     let ext = (down.mapTag && !down.mapTag.startsWith("data:") ? down.mapTag : down.fragments[0].url).split("/").pop();
     ext = ext.split("?").shift();
     ext = ext.split(".").pop();
     ext = ext ? ext : "ts";
-    ext = down.transcode ? "mp4" : ext;
+    ext = down.findPipeline('transcode') ? "mp4" : ext;
 
     let fileName = "";
     const customFilename = $('#customFilename').val().trim();
